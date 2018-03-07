@@ -3,7 +3,6 @@
 import numpy as np
 import time
 from numpy import random
-import torch
 import torch.nn as nn
 from torch.autograd import Variable
 #import torch.autograd as autograd
@@ -17,7 +16,7 @@ import gc
 from memory_profiler import profile
 from Models import (EncoderWithMemory, AttnDecoderWithMemory,
 EncoderRNN, AttnDecoderRNN, PointerGenAttnDecoderWithMemory)
-
+import torch
 
 
 """
@@ -91,6 +90,10 @@ class DataStatistics:
         self.targetword2index = w2i
         self.targetword2count = w2c
         self.n_words_target = self.max_target_vocab
+        global SOS_token 
+        SOS_token = self.targetword2index['SOS']
+        global EOS_token 
+        EOS_token = self.targetword2index['EOS']
     
 
 def create_glove_dict():
@@ -447,21 +450,28 @@ def evaluate(ds, encoder, decoder, input_variable, WOI, extended_vocab, max_deco
         pass
 
     decoded_words = []
+    max_words = ds.n_words_target
+    unk_index = ds.targetword2index['<unk>']
+    
     for di in range(max_decoder_length):
         decoder_output, decoder_hidden = decoder(
             decoder_input, decoder_hidden, encoder_outputs, WOI)
         topv, topi = decoder_output.data.topk(1)
-        pdb.set_trace()
-        ni = topi[0][0][0]
+        ni = topi[0]
+        decoder_input = Variable(ni if int(ni) < max_words else torch.LongTensor([unk_index]))
+        decoder_input = decoder_input.cuda() if use_cuda else decoder_input
         
-        if ni == EOS_token:
+        if int(ni) == EOS_token:
             decoded_words.append('<EOS>')
             break
         else:
             try:
-                word = extended_vocab[1][ni]
+                word = extended_vocab[1][int(ni)]
             except:
-                word = '<unk>'
+                try:
+                    word = ds.targetindex2word[int(ni)]
+                except:
+                    word = '<unk>'
             decoded_words.append(word)
 
     return decoded_words
