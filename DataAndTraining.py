@@ -616,7 +616,7 @@ def batchedTrainIters(data_statistics, pairs, encoder, decoder, n_iters, n_examp
             if use_cuda:
                 to_validate = to_validate.cuda()
                 vWOI = vWOI.cuda()
-            print(evaluate(data_statistics, encoder, decoder, to_validate, vWOI, vextended_vocab))
+            print(evaluate(data_statistics, encoder, decoder, to_validate, vWOI[0].unsqueeze(0), vextended_vocab))
             if use_cuda:
                 batch = [[example[0].cuda(), example[1].cuda()] for example in val_batch]
             else:
@@ -665,6 +665,6 @@ if __name__ == '__main__':
                       decoder=attn_decoder_mem,
                       n_iters=int(1e4),
                       n_examples=len(training_pairs),
-                      batch_size=1,
-                      print_every=1,
+                      batch_size=5,
+                      print_every=100,
                       learning_rate = 1e-2)
