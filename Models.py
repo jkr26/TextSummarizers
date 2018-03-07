@@ -22,7 +22,7 @@ def memory_usage():
 
 
 use_cuda = torch.cuda.is_available()
-torch.backends.cudnn.enabled = False
+torch.backends.cudnn.enabled = True
 
 class EncoderRNN(nn.Module):
     def __init__(self, input_size, hidden_dim, n_layers=1, bi=False):
@@ -356,11 +356,12 @@ class AttnDecoderWithMemory(nn.Module):
         self.out = nn.Linear(self.hidden_dim, self.output_size)
 
         
-    def forward(self, input, hidden, encoder_outputs):
+    def forward(self, input, hidden, encoder_outputs, word_occurrence_indicator):
         embedded = self.embedding(input).view(-1, self.hidden_dim)
         hidden = [hidden[0].view(-1, 1, self.hidden_dim), 
                   hidden[1].view(-1, 1, self.hidden_dim)]
 #        pdb.set_trace()
+        
         intermediate_attn = self.attn(torch.cat((embedded, hidden[0].view(-1, self.hidden_dim)), 1))
         transformed_coverage = self.coverage_transform(self.coverage_vector+intermediate_attn)
         transformed_state = self.state_transform(hidden[1].view(-1, self.hidden_dim))
@@ -408,7 +409,7 @@ class AttnDecoderWithMemory(nn.Module):
         
 #        pdb.set_trace()
         self.coverage_vector = self.coverage_vector+intermediate_attn
-        output = F.log_softmax(self.out(output), dim=-1)
+        output = F.log_softmax(self.out(hidden[1].view(-1, 1, self.hidden_dim)), dim=-1)
         
         
         return output, hidden
@@ -494,13 +495,11 @@ class LocalAttnDecoderRNN(nn.Module):
         output = self.attn_combine(output).unsqueeze(0)
 
         for i in range(self.n_layers):
-            
-            output = F.relu(output)
             x = output
             output, hidden = self.lstm(output, hidden)
             output = output+x
 
-        output = F.log_softmax(self.out(output[0]), dim=1)
+        output = F.log_softmax(self.out(hidden[1]), dim=1)
         return output, hidden
 
     def initHidden(self, batch_size):
@@ -521,7 +520,7 @@ class LocalAttnDecoderRNN(nn.Module):
 class PointerGenAttnDecoderWithMemory(nn.Module):
     def __init__(self, hidden_dim, output_size, max_length, memory_size,
                  memory_dim, controller_dim=64,n_layers=1, n_heads=2):
-        super(AttnDecoderWithMemory, self).__init__()
+        super(PointerGenAttnDecoderWithMemory, self).__init__()
         self.hidden_dim = hidden_dim
         self.output_size = output_size
         self.n_layers = n_layers
@@ -531,7 +530,6 @@ class PointerGenAttnDecoderWithMemory(nn.Module):
         self.attn = nn.Linear(self.hidden_dim * 2, self.max_length)
         self.coverage_transform = nn.Linear(self.max_length, self.max_length, bias=False)
         self.state_transform = nn.Linear(self.hidden_dim, self.max_length, bias=False)
-        self.attn_combine = nn.Linear(self.hidden_dim * 2, self.hidden_dim)
         self.coverage_vector = None
         
         self.n_layers = n_layers
@@ -543,23 +541,35 @@ class PointerGenAttnDecoderWithMemory(nn.Module):
         self.read_heads = None
         self.write_heads = None
         
-        self.p_gen = 0
-        
-        
+        self.p_gen = 1
+        self.generator_sigmoid = nn.Sigmoid()
+        self.context_lin_for_generator = nn.Linear(self.hidden_dim, 1)
+        self.decoder_state_lin_for_generator = nn.Linear(self.hidden_dim, 1, bias=False)
+        self.embedding_lin_for_generator = nn.Linear(self.hidden_dim, 1, bias=False)
         
         self.read_controller_preprocess = nn.Linear(memory_dim*memory_size+hidden_dim, controller_dim)
         self.write_controller_preprocess = nn.Linear(memory_dim*memory_size+hidden_dim, controller_dim)
         self.read_controller = LSTMMemoryController(controller_dim, memory_size, memory_dim, int(n_heads/2))
         self.write_controller = LSTMMemoryController(controller_dim, memory_size, memory_dim, int(n_heads/2))
-        self.lstm = nn.LSTM(hidden_dim+memory_dim*int(n_heads/2), hidden_dim, batch_first=True)
+        self.lstm = nn.LSTM(hidden_dim, hidden_dim, batch_first=True)
         
-        self.out = nn.Linear(self.hidden_dim, self.output_size)
+        self.out = nn.Linear(self.hidden_dim*2+self.memory_dim, self.output_size)
 
         
-    def forward(self, input, hidden, encoder_outputs):
+    def forward(self, input, hidden, encoder_outputs, word_occurrence_indicator):
         embedded = self.embedding(input).view(-1, self.hidden_dim)
+        hidden = [hidden[0].view(1, -1, self.hidden_dim), 
+                  hidden[1].view(1, -1, self.hidden_dim)]
+
+        output = embedded
+        for i in range(self.n_layers):
+            output = output.view(-1, 1, self.hidden_dim)
+            x = output
+            output, hidden = self.lstm(output,
+                     hidden)
+            output = output+x
         hidden = [hidden[0].view(-1, 1, self.hidden_dim), 
-                  hidden[1].view(-1, 1, self.hidden_dim)]
+              hidden[1].view(-1, 1, self.hidden_dim)]
 #        pdb.set_trace()
         intermediate_attn = self.attn(torch.cat((embedded, hidden[0].view(-1, self.hidden_dim)), 1))
         transformed_coverage = self.coverage_transform(self.coverage_vector+intermediate_attn)
@@ -567,11 +577,8 @@ class PointerGenAttnDecoderWithMemory(nn.Module):
         attn_weights = F.softmax(transformed_coverage+intermediate_attn+transformed_state, dim=1)
         attn_applied = torch.bmm(attn_weights.view(-1, 1, self.max_length),
                                  encoder_outputs).view(-1, self.hidden_dim)
-        output = torch.cat((embedded, attn_applied),1)
-        output = self.attn_combine(output).unsqueeze(0)
+        conc = torch.cat((hidden[0].squeeze(1), attn_applied),1)
         
-        hidden = [hidden[0].view(1, -1, self.hidden_dim), 
-                  hidden[1].view(1, -1, self.hidden_dim)]
         
         read_controller_input = self.read_controller_preprocess(torch.cat((hidden[0].view(-1, self.hidden_dim),
                                                                   self.memory.view(-1, self.memory_size*self.memory_dim)), dim=1))
@@ -593,25 +600,31 @@ class PointerGenAttnDecoderWithMemory(nn.Module):
         write_key_strength, write_gate_strength, \
         write_shift, write_sharpening, self.write_heads)
 
-        read_in = torch.bmm(read_weights, self.memory).view(-1, 1, self.memory_dim*int(self.n_heads/2))
-
-
-    ##In Manning's paper, this comes at the beginning not the end...
-        for i in range(self.n_layers):
-            output = output.view(-1, 1, self.hidden_dim)
-            x = output
-            output, hidden = self.lstm(torch.cat((output, read_in), dim=2),
-                     hidden)
-            output = output+x
-        
+        read_in = torch.bmm(read_weights, self.memory).view(-1,self.memory_dim*int(self.n_heads/2))
+        read_in
         self.rewrite_memory(write_weights, write_erase, write_add)
+        conc = torch.cat((conc, read_in), 1)
+        self.coverage_vector = self.coverage_vector+attn_weights
+        p_vocab = F.softmax(self.out(conc), dim=-1)
+        generator_weights = torch.bmm(attn_weights.view(-1, 1, self.max_length),
+                                      word_occurrence_indicator)
+        extended_vocab_length = generator_weights.shape[2]
+        generator_weights = F.normalize(generator_weights.view(-1, extended_vocab_length),p=1)
         
-#        pdb.set_trace()
-        self.coverage_vector = self.coverage_vector+intermediate_attn
-        output = F.log_softmax(self.out(output), dim=-1)
+        to_concat = Variable(torch.zeros(p_vocab.shape[0], extended_vocab_length-self.output_size))
+        if use_cuda:
+            to_concat = to_concat.cuda()
+        if to_concat.size() != torch.Size([1]):
+            p_vocab = torch.cat((p_vocab,to_concat), dim=1)
+        if float(torch.sum(generator_weights))<.01:
+            return torch.log(p_vocab), hidden
+        p_gen = self.generator_sigmoid(self.context_lin_for_generator(attn_applied)+\
+                                  self.decoder_state_lin_for_generator(hidden[1].view(-1, self.hidden_dim))\
+                                  +self.embedding_lin_for_generator(embedded))
         
+        prob_dist = torch.log((p_gen*p_vocab + (1-p_gen)*generator_weights).clamp(min=1e-6))
         
-        return output, hidden
+        return prob_dist, hidden
         
     def rewrite_memory(self, write_weights, erase, add):
         """Also, not as bad as it once was.

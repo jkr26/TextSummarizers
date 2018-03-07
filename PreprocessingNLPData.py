@@ -51,7 +51,7 @@ def read_wiki2010_corpus_first_million():
                        WHERE CorpusName = 'Wikipedia2010Corpus'
                        """
                        )
-        summary_description_pairs = list(set(cursor.fetchmany(5e4)))
+        summary_description_pairs = list(set(cursor.fetchmany(1e2)))
         summary_description_pairs = [(pair[0], pair[1]) for pair in summary_description_pairs
                                      if (pair[0] and pair[1] and len(pair[1].split())<5000)]
     
