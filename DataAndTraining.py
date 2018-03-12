@@ -665,6 +665,6 @@ if __name__ == '__main__':
                       decoder=attn_decoder_mem,
                       n_iters=int(1e4),
                       n_examples=len(training_pairs),
-                      batch_size=5,
+                      batch_size=4,
                       print_every=100,
                       learning_rate = 1e-2)
