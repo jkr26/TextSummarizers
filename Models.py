@@ -667,3 +667,60 @@ class PointerGenAttnDecoderWithMemory(nn.Module):
         else:
             self.read_heads = read_heads
             self.write_heads = write_heads
+            
+class TwoLayerConvEncoder(nn.Module):
+    """I haven't been taking sufficient advantage of the ability to modularize
+    classes--for these tiny models it doesn't matter much but it conceivably
+    could seriously simplify implementations like the ones above...
+    
+    I *believe* I am transposed from the version described in the Facebook paper
+    """
+    def __init__(self, max_seq_len, wv_dim=50):
+        super(TwoLayerConvEncoder, self).__init__()
+        self.input_dim = max_seq_len
+        self.bn1 = nn.BatchNorm1d(max_seq_len)
+        self.conv1 = nn.Conv1d(in_channels=wv_dim, out_channels=wv_dim,
+                               kernel_size=501, padding=250)
+        self.lrelu1 = nn.LeakyReLU()
+        self.bn2 = nn.BatchNorm1d(max_seq_len)
+        self.conv2 = nn.Conv1d(in_channels=wv_dim, out_channels=wv_dim,
+                               kernel_size=501, padding=250)
+        self.lrelu2 =nn.LeakyReLU()
+        
+    def forward(self, x):
+        """For now this is a naive implementation, assuming the dimensionality
+        will work out--I'm sure it will have to be debugged...
+        
+        esp because of the bn/conv differences
+        """
+        norm = self.bn1(x)
+        to_add = norm.clone()
+        lin = self.conv1(norm)
+        nonlin = self.lrelu(lin)
+        norm = self.bn2(nonlin)
+        lin = self.conv2(norm + to_add)
+        nonlin = self.lrelu2(lin)
+        return nonlin, x
+    
+class SummaryContextEncoder(nn.Module):
+    """Again this is a simple implementation
+    """
+    def __init__(self, max_sum_len, wv_dim=50):
+        super(SummaryContextEncoder, self).__init__()
+        self.input_dim = max_sum_len
+        #  After thinking about it, I believe the line that follows is the\
+        #  best way to implement the linear trans in eqn (1) of the FB paper
+        self.decoder_summatrix1 = nn.Conv1d(in_channels=wv_dim, out_channels=wv_dim,
+                                      kernel_size=1)
+        self.attn_softmax1 = nn.Softmax(dim=1)
+        
+        
+    def foward(x, encoder_output, word_embeddings):
+        """Need to be very careful in implementing the attention portion...
+        need to compute dot products of decoder summary with encoder_output
+        then pass through a softmax computed on the right dimension...
+        So we TRANSPOSE thedeoced summary then matrixmultiply it with the encoder_output,
+        this will give us a (B) x sum_len x k matrix.
+        Then we softmax over the k-dim, which should be 1. This SHOULD give us
+        the correct (B) x sum_len x k (a_{ij}) matrix. 
+        """
