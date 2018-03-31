@@ -12,11 +12,12 @@ Created on Fri Dec 29 18:38:04 2017
 """
 
 
+
 class WikipediaCorpusFirstMillion(Dataset):
-    def __init__(self):
+    def __init__(self, num):
         """
         """
-        self.raw_data = read_wiki2010_corpus_first_million()
+        self.raw_data = read_wiki2010_corpus_first_million(num)
         self.raw_data = _remove_punctuation(self.raw_data)
 
     def __getindex__(self,idx):
@@ -53,7 +54,7 @@ def read_wiki2010_corpus_first_million(num):
                        )
         summary_description_pairs = list(set(cursor.fetchmany(num)))
         summary_description_pairs = [(pair[0], pair[1]) for pair in summary_description_pairs
-                                     if (pair[0] and pair[1] and len(pair[1].split())<5000)]
+                                     if (pair[0] and pair[1] and len(pair[1].split())<3000)]
     
     finally:
         cursor.close()
@@ -61,12 +62,12 @@ def read_wiki2010_corpus_first_million(num):
     return summary_description_pairs
 
 class DataStatistics:
-    def __init__(self, name, max_target_vocab=30000):
+    def __init__(self, name, max_target_vocab=20000):
         self.name = name
         self.targetword2index = {"SOS":0, "EOS":1,'<unk>':2}
         self.targetword2count = {'<unk>':10000, 'SOS':10000, 'EOS':10000}
         self.targetindex2word = {0: "SOS", 1: "EOS", 2:'<unk>'}
-        self.n_words_target = 3  # Count SOS and EOS
+        self.n_words_target = 3  # Count SOS and EOS and unk
         self.max_length = 0
         self.glove_dict = create_glove_dict()
         self.glove_vector_size = len(self.glove_dict['the'])
@@ -133,7 +134,7 @@ def generateWikiCorpusTrainingPairsAndDataStatistics(num):
     del Data
     training_pairs =[([w.lower() for w in pair[0]], [w.lower() for w in pair[1]]) for pair in training_pairs]
 
-    ds = PreprocessingNLPData.DataStatistics('WikipediaCorpus', max_target_vocab=20000)
+    ds = DataStatistics('WikipediaCorpus', max_target_vocab=20000)
     for pair in training_pairs:
         ##0th element is the summary--1st is the long description.
         ##A little backwards perhaps

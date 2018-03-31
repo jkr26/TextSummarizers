@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import numpy as np
-import time
-from numpy import random
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
 #import torch.autograd as autograd
-from torch import optim
 import torch.nn.functional as F
 import pdb
 from memory_profiler import profile
@@ -39,7 +36,6 @@ class EncoderRNN(nn.Module):
                                 batch_first=True)
 
     def forward(self, input, hidden):
-#        pdb.set_trace()
         output = self.input_trans(input)
         for i in range(self.n_layers):
             x = self.input_trans(input)
@@ -205,7 +201,7 @@ class EncoderWithMemory(nn.Module):
         """
         self.address_list = []
         for k in range(int(self.n_heads/2)):
-            content_weighting = F.softmax(key_strength*F.cosine_similarity(keys.unsqueeze(2), self.memory, dim=2),dim=1)
+            content_weighting = F.softmax(key_strength*F.cosine_similarity(keys.unsqueeze(2), self.memory, dim=2), dim=1)
             gated = gate_strength*content_weighting + (1-gate_strength)*heads[k]
             self.address_list.append(gated)
         del content_weighting
@@ -360,7 +356,6 @@ class AttnDecoderWithMemory(nn.Module):
         embedded = self.embedding(input).view(-1, self.hidden_dim)
         hidden = [hidden[0].view(-1, 1, self.hidden_dim), 
                   hidden[1].view(-1, 1, self.hidden_dim)]
-#        pdb.set_trace()
         
         intermediate_attn = self.attn(torch.cat((embedded, hidden[0].view(-1, self.hidden_dim)), 1))
         transformed_coverage = self.coverage_transform(self.coverage_vector+intermediate_attn)
@@ -406,8 +401,7 @@ class AttnDecoderWithMemory(nn.Module):
             output = output+x
         
         self.rewrite_memory(write_weights, write_erase, write_add)
-        
-#        pdb.set_trace()
+
         self.coverage_vector = self.coverage_vector+intermediate_attn
         output = F.log_softmax(self.out(hidden[1].view(-1, 1, self.hidden_dim)), dim=-1)
         
@@ -434,7 +428,7 @@ class AttnDecoderWithMemory(nn.Module):
         """
         address_list = []
         for k in range(int(self.n_heads/2)):
-            content_weighting = F.softmax(key_strength*F.cosine_similarity(keys.unsqueeze(2), self.memory, dim=2),dim=1)
+            content_weighting = F.softmax(key_strength*F.cosine_similarity(keys.unsqueeze(2), self.memory, dim=2), dim=1)
             gated = gate_strength*content_weighting + (1-gate_strength)*heads[k]
             address_list.append(gated)
         return torch.cat(address_list, dim=1).view(-1, int(self.n_heads/2), self.memory_size)
@@ -570,7 +564,6 @@ class PointerGenAttnDecoderWithMemory(nn.Module):
             output = output+x
         hidden = [hidden[0].view(-1, 1, self.hidden_dim), 
               hidden[1].view(-1, 1, self.hidden_dim)]
-#        pdb.set_trace()
         intermediate_attn = self.attn(torch.cat((embedded, hidden[0].view(-1, self.hidden_dim)), 1))
         transformed_coverage = self.coverage_transform(self.coverage_vector+intermediate_attn)
         transformed_state = self.state_transform(hidden[1].view(-1, self.hidden_dim))
@@ -617,7 +610,7 @@ class PointerGenAttnDecoderWithMemory(nn.Module):
         if to_concat.size() != torch.Size([1]):
             p_vocab = torch.cat((p_vocab,to_concat), dim=1)
         if float(torch.sum(generator_weights))<.01:
-            return torch.log(p_vocab), hidden
+            return torch.log(p_vocab.clamp(min=1e-6)), hidden
         p_gen = self.generator_sigmoid(self.context_lin_for_generator(attn_applied)+\
                                   self.decoder_state_lin_for_generator(hidden[1].view(-1, self.hidden_dim))\
                                   +self.embedding_lin_for_generator(embedded))

@@ -1,5 +1,7 @@
 import torch
-from torch.Autograd import Variable
+from torch.autograd import Variable
+import numpy as np
+import pdb
 
 use_cuda = torch.cuda.is_available()
 
@@ -7,15 +9,18 @@ def word2index(ds, type, word):
     if type =='input':
         try:
             return ds.glove_dict[word.lower()]
-        except:
+        except KeyError:
             return ds.glove_dict['<unk>']
     else:
         try:
             return ds.targetword2index[word.lower()]
-        except:
+        except KeyError:
             try:
-                return ds.extended_vocab[0][word.lower()]
-            except:
+                if ds.extended_vocab is not None:
+                    return ds.extended_vocab[0][word.lower()]
+                else:
+                    return ds.targetword2index['<unk>']
+            except KeyError:
                 return ds.targetword2index['<unk>']
 
   
@@ -27,11 +32,13 @@ def variableFromSentence(ds, type, sentence):
     indexes = indexesFromSentence(ds, type, sentence)
     #print(sentence)
     if type =='output':
-        indexes.append(EOS_token)
-        indexes.insert(0, SOS_token)
-        result = Variable(torch.LongTensor(np.array(indexes)).view(-1, 1), requires_grad=False)
+        indexes.append(ds.targetword2index['EOS'])
+        indexes.insert(0, ds.targetword2index['SOS'])
+        result = Variable(torch.LongTensor(np.array(indexes)).view(-1, 1),
+                          requires_grad=False)
     elif type =='input':
-        result = Variable(torch.FloatTensor(np.array(indexes)).view(-1, ds.glove_vector_size), requires_grad=False)
+        result = Variable(torch.FloatTensor(np.array(indexes)).view(-1,
+                          ds.glove_vector_size), requires_grad=False)
     return result
 
 
@@ -52,14 +59,14 @@ def createWordOccurrenceIndicator(ds, texts):
     next_idx = ds.n_words_target
     for text in texts:
         for word in text:
-            idx = word2index(ds, 'output', word, {})
-            if idx==ds.targetword2index['<unk>']:
+            idx = word2index(ds, 'output', word)
+            if idx == ds.targetword2index['<unk>'] or idx > ds.max_target_vocab:
                 try:
                     new_words2index[word]
                 except:
                     new_index2words[next_idx] = word
                     new_words2index[word] = next_idx
-                    next_idx+=1
+                    next_idx += 1
     text_matrices = []
     for text in texts:
         mtx = Variable(torch.zeros(1, ds.max_length, next_idx), requires_grad=False)
@@ -72,10 +79,13 @@ def createWordOccurrenceIndicator(ds, texts):
             mtx[0,i,idx]=1
             i+=1
         text_matrices.append(mtx)
-    WOI = torch.cat(text_matrices, 0)
+    try:
+        WOI = torch.cat(text_matrices, 0)
+    except RuntimeError:
+        pdb.set_trace()
     if use_cuda:
         WOI = WOI.cuda()
-    ds.extended_vocab = [extended_word2index, extended_index2word]
+    ds.extended_vocab = [new_words2index, new_index2words]
     return WOI
 
 def processInputAndTargetVariables(input_variables, target_variables):
@@ -116,7 +126,7 @@ def processInputAndTargetVariables(input_variables, target_variables):
             diff = max_target_length-variable.size()[0]
             var_size = list(variable.size())
             var_size[0] = int(diff)
-            to_pad = Variable(torch.LongTensor(np.zeros(var_size)))
+            to_pad = Variable(torch.LongTensor(np.zeros(var_size).astype(int)))
             to_pad = to_pad.cuda() if use_cuda else to_pad
             output_var_list.append(torch.cat([variable, to_pad]))
         else:
@@ -125,3 +135,5 @@ def processInputAndTargetVariables(input_variables, target_variables):
     target_variables = torch.cat(output_var_list).view(batch_size, int(max_target_length), -1)
     ##Packing these padded variables
     #batched_target = torch.nn.utils.rnn.pack_padded_sequence(target_variables, target_lengths, batch_first=True)
+    
+    return input_variables, target_variables, max_input_length, max_target_length
